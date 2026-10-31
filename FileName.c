@@ -1,154 +1,409 @@
+
 #define _CRT_SECURE_NO_WARNINGS
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
 #include <windows.h>
 
-// Color Definitions
-#define RED_COLOR "\033[1;31m"
-#define YELLOW_COLOR "\033[1;33m"
-#define CYAN_COLOR "\033[1;36m"
-#define RESET_COLOR "\033[0m"
-
+#define ROWS 6
+#define COLS 7
 #define EMPTY ' '
-#define PLAYER1 'X'
-#define COMPUTER 'O'
-#define PLAYER2 'O'
 
-// Global Statistics
-int p1Wins = 0, p2Wins = 0, gameDraws = 0;
+#define RED 12
+#define YELLOW 14
+#define CYAN 11
+#define WHITE 15
+#define GRAY 8
+#define GREEN 10
 
-// Function Prototypes
-void initBoard(char board[6][7]);
-void printBoard(char board[6][7]);
-int dropDisc(char board[6][7], int col, char piece);
-int checkWin(char board[6][7], char piece);
-int isBoardFull(char board[6][7]);
-int getComputerMove(char board[6][7], int difficulty);
-void runGame(int vsComputer, int difficulty);
-void enableColors();
-void showStats();
+static HANDLE console;
+static int winsX = 0, winsO = 0, draws = 0;
 
-int main() {
-    enableColors();
-    srand((unsigned int)time(NULL));
-    int choice = 0;
+/* Console design */
 
-    while (choice != 4) {
-        printf(CYAN_COLOR "\n======= FOUR IN A ROW - PRO EDITION =======\n" RESET_COLOR);
-        printf("1. Player vs Player\n2. Player vs Computer\n3. View Statistics\n4. Exit\nChoice: ");
-        if (scanf("%d", &choice) != 1) { while (getchar() != '\n'); continue; }
+void color(int c) {
+    SetConsoleTextAttribute(console, (WORD)c);
+}
 
-        if (choice == 1) runGame(0, 0);
-        else if (choice == 2) {
-            int diff;
-            printf("\nDifficulty: 1-Easy, 2-Medium, 3-Hard: ");
-            if (scanf("%d", &diff) != 1) { while (getchar() != '\n'); continue; }
-            runGame(1, diff);
+void clearScreen(void) {
+    system("cls");
+}
+
+void line(void) {
+    color(CYAN);
+    puts("  +-----------------------------------------------+");
+    color(WHITE);
+}
+
+void heading(const char* text) {
+    line();
+    color(CYAN);
+    printf("  |  ");
+    color(WHITE);
+    printf("%-43s", text);
+    color(CYAN);
+    puts("|");
+    line();
+}
+
+int readNumber(int min, int max) {
+    char input[100], extra;
+    int value;
+
+    for (;;) {
+        color(YELLOW);
+        printf("  > ");
+        color(WHITE);
+
+        if (!fgets(input, sizeof input, stdin))
+            exit(0);
+
+        if (sscanf(input, " %d %c", &value, &extra) == 1
+            && value >= min && value <= max)
+            return value;
+
+        color(RED);
+        printf("  Please enter a number from %d to %d.\n",
+            min, max);
+    }
+}
+
+void pauseGame(void) {
+    char buffer[8];
+
+    color(GRAY);
+    puts("\n  Press ENTER to continue...");
+    color(WHITE);
+    fgets(buffer, sizeof buffer, stdin);
+}
+
+/* Board functions */
+
+void initBoard(char board[ROWS][COLS]) {
+    for (int r = 0; r < ROWS; ++r)
+        for (int c = 0; c < COLS; ++c)
+            board[r][c] = EMPTY;
+}
+
+void printBoard(const char board[ROWS][COLS]) {
+    color(CYAN);
+    puts("\n       1   2   3   4   5   6   7");
+    puts("     +---+---+---+---+---+---+---+");
+
+    for (int r = 0; r < ROWS; ++r) {
+        color(CYAN);
+        printf("     |");
+
+        for (int c = 0; c < COLS; ++c) {
+            color(WHITE);
+            printf(" ");
+
+            if (board[r][c] == 'X')
+                color(RED);
+            else if (board[r][c] == 'O')
+                color(YELLOW);
+            else
+                color(GRAY);
+
+            printf("%c",
+                board[r][c] == EMPTY ? '.' : board[r][c]);
+
+            color(CYAN);
+            printf(" |");
         }
-        else if (choice == 3) showStats();
+
+        puts("");
+        puts("     +---+---+---+---+---+---+---+");
     }
-    return 0;
+
+    color(WHITE);
 }
 
-void enableColors() {
-#ifndef ENABLE_VIRTUAL_TERMINAL_PROCESSING
-#define ENABLE_VIRTUAL_TERMINAL_PROCESSING 0x0004
-#endif
-    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
-    DWORD dwMode = 0;
-    if (hOut != INVALID_HANDLE_VALUE && GetConsoleMode(hOut, &dwMode)) {
-        dwMode |= ENABLE_VIRTUAL_TERMINAL_PROCESSING;
-        SetConsoleMode(hOut, dwMode);
-    }
-}
+int drop(char board[ROWS][COLS], int col, char piece) {
+    if (col < 0 || col >= COLS ||
+        board[0][col] != EMPTY)
+        return 0;
 
-void initBoard(char board[6][7]) {
-    for (int i = 0; i < 6; i++) for (int j = 0; j < 7; j++) board[i][j] = EMPTY;
-}
-
-void printBoard(char board[6][7]) {
-    printf("\n    1   2   3   4   5   6   7\n  -----------------------------\n");
-    for (int i = 0; i < 6; i++) {
-        printf("  |");
-        for (int j = 0; j < 7; j++) {
-            if (board[i][j] == PLAYER1) printf(" %s%c%s |", RED_COLOR, board[i][j], RESET_COLOR);
-            else if (board[i][j] == COMPUTER) printf(" %s%c%s |", YELLOW_COLOR, board[i][j], RESET_COLOR);
-            else printf(" %c |", board[i][j]);
+    for (int r = ROWS - 1; r >= 0; --r) {
+        if (board[r][col] == EMPTY) {
+            board[r][col] = piece;
+            return 1;
         }
-        printf("\n  -----------------------------\n");
     }
-}
 
-int dropDisc(char board[6][7], int col, char piece) {
-    if (col < 0 || col >= 7 || board[0][col] != EMPTY) return 0;
-    for (int i = 5; i >= 0; i--) if (board[i][col] == EMPTY) { board[i][col] = piece; return 1; }
     return 0;
 }
 
-int checkWin(char board[6][7], char piece) {
-    for (int i = 0; i < 6; i++) for (int j = 0; j < 4; j++)
-        if (board[i][j] == piece && board[i][j + 1] == piece && board[i][j + 2] == piece && board[i][j + 3] == piece) return 1;
-    for (int i = 0; i < 3; i++) for (int j = 0; j < 7; j++)
-        if (board[i][j] == piece && board[i + 1][j] == piece && board[i + 2][j] == piece && board[i + 3][j] == piece) return 1;
-    for (int i = 0; i < 3; i++) for (int j = 0; j < 4; j++)
-        if (board[i][j] == piece && board[i + 1][j + 1] == piece && board[i + 2][j + 2] == piece && board[i + 3][j + 3] == piece) return 1;
-    for (int i = 3; i < 6; i++) for (int j = 0; j < 4; j++)
-        if (board[i][j] == piece && board[i - 1][j + 1] == piece && board[i - 2][j + 2] == piece && board[i - 3][j + 3] == piece) return 1;
+/* Win detection */
+
+int win(const char board[ROWS][COLS], char p) {
+    const int dr[4] = { 0, 1, 1, 1 };
+    const int dc[4] = { 1, 0, 1, -1 };
+
+    for (int r = 0; r < ROWS; ++r) {
+        for (int c = 0; c < COLS; ++c) {
+            if (board[r][c] != p)
+                continue;
+
+            for (int d = 0; d < 4; ++d) {
+                int ok = 1;
+
+                for (int k = 1; k < 4; ++k) {
+                    int rr = r + k * dr[d];
+                    int cc = c + k * dc[d];
+
+                    if (rr < 0 || rr >= ROWS ||
+                        cc < 0 || cc >= COLS ||
+                        board[rr][cc] != p) {
+                        ok = 0;
+                        break;
+                    }
+                }
+
+                if (ok)
+                    return 1;
+            }
+        }
+    }
+
     return 0;
 }
 
-int isBoardFull(char board[6][7]) {
-    for (int j = 0; j < 7; j++) if (board[0][j] == EMPTY) return 0;
+int full(const char board[ROWS][COLS]) {
+    for (int c = 0; c < COLS; ++c) {
+        if (board[0][c] == EMPTY)
+            return 0;
+    }
+
     return 1;
 }
 
-int getComputerMove(char board[6][7], int difficulty) {
+/* Computer AI */
+
+int winningColumn(char board[ROWS][COLS], char piece) {
+    for (int c = 0; c < COLS; ++c) {
+        if (board[0][c] != EMPTY)
+            continue;
+
+        char temp[ROWS][COLS];
+
+        for (int r = 0; r < ROWS; ++r)
+            for (int j = 0; j < COLS; ++j)
+                temp[r][j] = board[r][j];
+
+        drop(temp, c, piece);
+
+        if (win(temp, piece))
+            return c;
+    }
+
+    return -1;
+}
+
+int computerMove(char board[ROWS][COLS], int difficulty) {
+    int col;
+
     if (difficulty >= 2) {
-        char pieces[2] = { COMPUTER, PLAYER1 };
-        for (int p = 0; p < 2; p++) {
-            for (int j = 0; j < 7; j++) {
-                for (int i = 5; i >= 0; i--) {
-                    if (board[i][j] == EMPTY) {
-                        board[i][j] = pieces[p];
-                        if (checkWin(board, pieces[p])) { board[i][j] = EMPTY; return j; }
-                        board[i][j] = EMPTY; break;
-                    }
-                }
-            }
-        }
+        col = winningColumn(board, 'O');
+
+        if (col >= 0)
+            return col;
+
+        col = winningColumn(board, 'X');
+
+        if (col >= 0)
+            return col;
     }
+
     if (difficulty == 3) {
-        int order[] = { 3, 2, 4, 1, 5, 0, 6 };
-        for (int k = 0; k < 7; k++) if (board[0][order[k]] == EMPTY) return order[k];
-    }
-    int c; do { c = rand() % 7; } while (board[0][c] != EMPTY);
-    return c;
-}
+        int order[COLS] = { 3, 2, 4, 1, 5, 0, 6 };
 
-void showStats() {
-    printf(CYAN_COLOR "\n--- STATISTICS ---\nP1 Wins: %d | P2 Wins: %d | Draws: %d\n" RESET_COLOR, p1Wins, p2Wins, gameDraws);
-}
-
-void runGame(int vsComputer, int difficulty) {
-    char board[6][7];
-    initBoard(board);
-    int turn = 0, win = 0;
-    while (!win && !isBoardFull(board)) {
-        printBoard(board);
-        char currentPiece = (turn % 2 == 0) ? PLAYER1 : (vsComputer ? COMPUTER : PLAYER2);
-        int col;
-        if (turn % 2 != 0 && vsComputer) { printf("Computer thinking...\n"); Sleep(800); col = getComputerMove(board, difficulty); }
-        else { printf("Player %c, column (1-7): ", currentPiece); if (scanf("%d", &col) != 1) { while (getchar() != '\n'); continue; } col--; }
-        if (dropDisc(board, col, currentPiece)) {
-            if (checkWin(board, currentPiece)) {
-                printBoard(board);
-                printf("\n*** PLAYER %c WINS! ***\n", currentPiece);
-                if (currentPiece == PLAYER1) p1Wins++; else p2Wins++;
-                win = 1;
-            }
-            turn++;
+        for (int i = 0; i < COLS; ++i) {
+            if (board[0][order[i]] == EMPTY)
+                return order[i];
         }
     }
-    if (!win) { printBoard(board); printf("\nDRAW!\n"); gameDraws++; }
+
+    int available[COLS], count = 0;
+
+    for (int c = 0; c < COLS; ++c) {
+        if (board[0][c] == EMPTY)
+            available[count++] = c;
+    }
+
+    return count ? available[rand() % count] : -1;
+}
+
+/* Statistics */
+
+void stats(void) {
+    clearScreen();
+    heading("GAME STATISTICS");
+
+    color(RED);
+    printf("\n  Player X wins : %d\n", winsX);
+
+    color(YELLOW);
+    printf("  Player O wins : %d\n", winsO);
+
+    color(WHITE);
+    printf("  Draws         : %d\n", draws);
+
+    pauseGame();
+}
+
+/* Instructions */
+
+void instructions(void) {
+    clearScreen();
+    heading("HOW TO PLAY");
+
+    puts("\n  Connect four pieces in a row to win.");
+    puts("  You can win horizontally, vertically, or diagonally.");
+    puts("  Enter a column number (1-7) to drop your piece.");
+    puts("  X plays first. O is the second player or computer.");
+    puts("  Difficulty: Easy=random, Medium=win/block,");
+    puts("              Hard=win/block + center preference.");
+
+    pauseGame();
+}
+
+/* Main game */
+
+void play(int againstComputer, int difficulty) {
+    char board[ROWS][COLS];
+    int playAgain = 1;
+
+    while (playAgain) {
+        initBoard(board);
+        int turn = 0;
+
+        for (;;) {
+            char piece = (turn % 2 == 0) ? 'X' : 'O';
+
+            clearScreen();
+            heading(againstComputer ?
+                "PLAYER VS COMPUTER" : "PLAYER VS PLAYER");
+
+            color(piece == 'X' ? RED : YELLOW);
+            printf("\n  Current turn: Player %c%s\n",
+                piece,
+                againstComputer && piece == 'O' ?
+                " (Computer)" : "");
+
+            printBoard(board);
+
+            int col;
+
+            if (againstComputer && piece == 'O') {
+                color(YELLOW);
+                puts("\n  Computer is thinking...");
+                Sleep(500);
+                col = computerMove(board, difficulty);
+            }
+            else {
+                puts("\n  Choose a column (1-7):");
+                col = readNumber(1, 7) - 1;
+            }
+
+            if (!drop(board, col, piece)) {
+                color(RED);
+                puts("  That column is full. Try another.");
+                Sleep(900);
+                continue;
+            }
+
+            if (win(board, piece)) {
+                clearScreen();
+                heading("FOUR IN A ROW - WINNER!");
+                printBoard(board);
+
+                color(GREEN);
+                printf("\n  *** PLAYER %c WINS! ***\n", piece);
+
+                if (piece == 'X')
+                    ++winsX;
+                else
+                    ++winsO;
+
+                break;
+            }
+
+            if (full(board)) {
+                clearScreen();
+                heading("FOUR IN A ROW - DRAW");
+                printBoard(board);
+
+                color(YELLOW);
+                puts("\n  It's a draw!");
+                ++draws;
+                break;
+            }
+
+            ++turn;
+        }
+
+        color(WHITE);
+        puts("\n  [1] Play again    [2] Main menu");
+
+        playAgain = (readNumber(1, 2) == 1);
+    }
+}
+
+/* Main menu */
+
+int main(void) {
+    console = GetStdHandle(STD_OUTPUT_HANDLE);
+
+    srand((unsigned)time(NULL));
+
+    SetConsoleTitleA("Connect Four | C Console Game");
+
+    for (;;) {
+        clearScreen();
+        heading("CONNECT FOUR - COLOR EDITION");
+
+        color(WHITE);
+
+        puts("\n  [1] Player vs Player");
+        puts("  [2] Player vs Computer");
+        puts("  [3] View Statistics");
+        puts("  [4] How to Play");
+        puts("  [5] Exit");
+
+        puts("\n  Select an option (1-5):");
+
+        int choice = readNumber(1, 5);
+
+        if (choice == 1) {
+            play(0, 0);
+        }
+        else if (choice == 2) {
+            clearScreen();
+            heading("CHOOSE AI DIFFICULTY");
+
+            puts("\n  [1] Easy   - Random moves");
+            puts("  [2] Medium - Win or block immediate threats");
+            puts("  [3] Hard   - Win/block + prefer center");
+
+            puts("\n  Select difficulty (1-3):");
+
+            int difficulty = readNumber(1, 3);
+            play(1, difficulty);
+        }
+        else if (choice == 3) {
+            stats();
+        }
+        else if (choice == 4) {
+            instructions();
+        }
+        else {
+            color(CYAN);
+            puts("\n  Thanks for playing!");
+            color(WHITE);
+            break;
+        }
+    }
+
+    return 0;
 }
